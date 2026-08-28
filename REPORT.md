@@ -42,6 +42,34 @@
   - Đạt điểm tuyệt đối trên toàn bộ 40 fixtures chuẩn: `precision = 1.000` (100%), `recall = 1.000` (100% - 34/34 lỗi), `f1 = 1.000`, `false_claim_rate = 0.000` (0 lỗi vu khống).
   - Vượt qua 41/41 unit tests trong `tests/test_prosecute.py`.
 
+## Trả lời câu hỏi bảo vệ bài (Oral Defense)
+
+### Câu 1: Vì sao Gateway.decide không có execute(), và điều đó bảo vệ BẠN chứ không chỉ bảo vệ trọng tài?
+- **Phân định ranh giới tin cậy (Trust Boundary):** `Gateway.decide` chỉ chịu trách nhiệm đưa ra quyết định (`Decision`), còn việc thực thi (`execute`), tính chi phí credit, áp mutation và ghi log L1 hoàn toàn do Arena đáng tin cậy đảm nhiệm.
+- **Bảo vệ chính Agent:**
+  1. **Chống vu khống:** Đối thủ chỉ có thể kiện bạn dựa trên đúng `Decision` mà Gateway của bạn đã chính thức trả về cho lệnh đó, không thể vu cáo một hành vi bạn không phê duyệt.
+  2. **Trace bất biến, không thể bị giả mạo:** Ngăn chặn trường hợp tool hoặc memory độc hại tự ý kích hoạt các lời gọi trái phép ngoài tầm kiểm soát của Gateway.
+
+### Câu 2: act và sub khác nhau ở đâu, và vì sao operator — một bot viết rất hợp lý — vẫn thua chính xác ở chỗ này?
+- **Khác biệt:**
+  - `sub` (Subject): Định danh cá nhân của Agent ("Bạn là ai" - ví dụ: `agent:vlearn-tutor`).
+  - `act` (Actor Context): Quyền lực ủy quyền ("Bạn đang hành động nhân danh người dùng nào" - ví dụ: `learner:sv-0417`).
+- **Lý do operator thất bại:**
+  - Quyền hạn ghi dữ liệu (Authorization) bắt nguồn từ `act`, không bao giờ từ `sub`.
+  - Bot `operator` kiểm tra nhầm danh tính từ `sub` (tin rằng mình là tutor hợp lệ nên được phép ghi) thay vì kiểm tra mục tiêu ghi `target` có thuộc quyền sở hữu của `ctx.act` hay không (`target == ctx.act`). Khi bị tấn công `replace_act` (Confused Deputy), `operator` đã cho phép ghi chéo dữ liệu người dùng khác và bị xử phạt lỗi nặng nhất: `authority_exceeded` (trọng số 10).
+
+### Câu 3: Vì sao trọng số lớp lỗi bị triệt tiêu khỏi ngưỡng break-even 44,4%, và nếu hình phạt là hằng số −4 thì chiến thuật hợp lý sẽ đổi thành gì?
+- **Triệt tiêu trọng số:**
+  - Kỳ vọng điểm khi tố cáo 1 lỗi có trọng số $w$ với xác suất đúng $p$:
+    $$\mathbb{E} = p \cdot w - (1 - p) \cdot (0.8 \cdot w) = w \cdot (1.8p - 0.8)$$
+  - Để có lợi nhuận $(\mathbb{E} > 0) \iff 1.8p - 0.8 > 0 \iff p > \frac{0.8}{1.8} = \frac{4}{9} \approx \mathbf{44.4\%}$.
+  - Trọng số $w$ bị triệt tiêu ở 2 vế nên ngưỡng hòa vốn $44.4\%$ là đồng nhất cho toàn bộ 17 lớp lỗi.
+- **Nếu hình phạt là hằng số $-4$ (flat penalty):**
+  - Kỳ vọng: $\mathbb{E} = p \cdot w - (1 - p) \cdot 4 > 0 \iff p > \frac{4}{w + 4}$.
+  - Lớp nặng $w=10$ chỉ cần $p > \frac{4}{14} \approx 28.6\%$ là có lãi, trong khi lớp nhẹ $w=3$ cần $p > \frac{4}{7} \approx 57.1\%$.
+  - **Chiến thuật biến chất thành:** *"Bắn bừa (shotgunning) vào các lớp điểm cao (10 và 8) kể cả khi độ tự tin rất thấp vì tiền phạt cố định quá rẻ so với phần thưởng lớn"*. Cơ chế phạt tỉ lệ $-0.8w$ của giải đấu đã triệt tiêu hoàn toàn lỗ hổng này.
+
+
 
 
 
