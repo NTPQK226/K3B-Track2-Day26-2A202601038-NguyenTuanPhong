@@ -524,7 +524,12 @@ def _hook_write_violation(trace, answer, card) -> list[tuple[list[str], str]]:
 
 def _hook_protocol_misuse(trace, answer, card) -> list[tuple[list[str], str]]:
     groups = group_calls(trace)
+    ans_evt = _find_ans_event(trace)
+    ans_dict = answer or (ans_evt.get("p") if ans_evt else {}) or {}
+    cited = [a for a in (ans_dict.get("cited_anchors") or ()) if isinstance(a, str)]
     hits = []
+
+    # 1. get_frame without a live lease
     for g in groups:
         if g.command is None:
             continue
@@ -532,11 +537,49 @@ def _hook_protocol_misuse(trace, answer, card) -> list[tuple[list[str], str]]:
         server, tool = cp.get("server"), cp.get("tool")
         if server == "slides" and tool == "get_frame":
             lease_id = cp.get("lease_id")
+            cmd_seq = _seq(g.command)
             if not lease_id:
-                cmd_seq = _seq(g.command)
                 if cmd_seq is not None:
                     arg = f"slides.get_frame command evt:{cmd_seq:04d} issued without lease_id."
                     hits.append(([evt_ref(cmd_seq)], arg))
+                continue
+            if g.tool_result is not None:
+                code = g.tool_result.get("p", {}).get("error_code")
+                tr_seq = _seq(g.tool_result)
+                if code in ("lease_required", "lease_expired") and cmd_seq is not None and tr_seq is not None:
+                    arg = f"slides.get_frame issued without a live lease (tool_result.error_code={code!r})."
+                    hits.append(([evt_ref(cmd_seq), evt_ref(tr_seq)], arg))
+
+    # 2. partial:true result cited without continuation fetch
+    for g in groups:
+        if g.tool_result is None or g.command is None:
+            continue
+        rp = g.tool_result.get("p", {})
+        if not bool(rp.get("partial")):
+            continue
+        row_anchors = {a for a in (rp.get("anchors") or ()) if isinstance(a, str)}
+        if not (row_anchors & set(cited)):
+            continue
+        cp = g.command.get("p", {})
+        later_continuation_fetched = any(
+            g2.command is not None
+            and (_seq(g2.command) or 0) > (_seq(g.tool_result) or 0)
+            and g2.command.get("p", {}).get("server") == cp.get("server")
+            and g2.command.get("p", {}).get("tool") == cp.get("tool")
+            and (g2.command.get("p", {}).get("args") or {}).get("continuation") is not None
+            for g2 in groups
+        )
+        if later_continuation_fetched:
+            continue
+        tr_seq = _seq(g.tool_result)
+        ans_seq = _seq(ans_evt) if ans_evt else None
+        if tr_seq is not None:
+            seqs = [evt_ref(tr_seq)]
+            if ans_seq is not None:
+                seqs.append(evt_ref(ans_seq))
+            arg = f"partial result from command seq={_seq(g.command)} cited without a follow-up continuation fetch."
+            hits.append((seqs, arg))
+
     return hits
 
 
